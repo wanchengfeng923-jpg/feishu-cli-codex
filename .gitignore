@@ -1,0 +1,15 @@
+# 本地配置文件可能包含 AppSecret 等密钥，绝不入库
+.env
+*.env
+config.toml
+*.log
+
+# 权限申请文档（含真实姓名和 App ID，不随仓库公开）
+lark-permission-request-*.md
+
+# exe 通过 GitHub Release 发布，不纳入版本库
+setup-lark-cli.exe
+
+# 临时文件
+tmp/
+*.tmp

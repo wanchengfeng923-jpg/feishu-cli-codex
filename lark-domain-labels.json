@@ -1,0 +1,41 @@
+{
+  "labels": {
+    "im": "即时通讯",
+    "calendar": "日历",
+    "docs": "云文档",
+    "docx": "云文档(新版)",
+    "drive": "云盘/文件",
+    "sheets": "电子表格",
+    "base": "多维表格",
+    "bitable": "多维表格(旧版)",
+    "slides": "幻灯片",
+    "task": "任务",
+    "wiki": "知识库",
+    "mail": "邮箱",
+    "vc": "视频会议",
+    "minutes": "妙记/纪要",
+    "okr": "OKR",
+    "mindnote": "思维笔记",
+    "contact": "通讯录",
+    "approval": "审批",
+    "attendance": "考勤",
+    "application": "应用能力",
+    "spark": "妙搭/应用平台",
+    "board": "白板",
+    "search": "搜索",
+    "profile": "用户资料",
+    "space": "云空间",
+    "auth": "身份认证",
+    "offline_access": "基础(离线)",
+    "event": "事件订阅",
+    "note": "会议纪要",
+    "markdown": "Markdown",
+    "apps": "应用开发",
+    "unknown": "其他"
+  },
+  "status": {
+    "granted": "已授权生效",
+    "enabled": "应用已启用,待用户授权",
+    "missing": "待管理员在控制台开启"
+  }
+}
