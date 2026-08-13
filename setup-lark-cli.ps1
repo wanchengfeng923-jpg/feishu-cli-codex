@@ -48,7 +48,7 @@ trap {
     Write-Host ("[FATAL] 未处理异常: " + $_.Exception.Message) -ForegroundColor Red
     Write-Host $_.ScriptStackTrace -ForegroundColor Red
     $script:FailCount++
-    if (-not $CheckOnly) {
+    if (-not [Console]::IsInputRedirected) {
         $old = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try { Read-Host '按回车键退出（建议在终端中运行以查看完整报错）' | Out-Null } catch { }
@@ -1422,6 +1422,10 @@ Write-Host "warnings      : $script:WarnCount"
 if ($CheckOnly) { Write-Host '(CheckOnly mode: no changes were made)' -ForegroundColor Yellow }
 if ($script:FailCount -gt 0) { Write-Host 'Some checks failed - see details above.' -ForegroundColor Red }
 Write-Host 'Done.'
+
+if (-not [Console]::IsInputRedirected) {
+    Read-UserInput '按回车键退出'
+}
 
 if ($script:FailCount -gt 0) { exit 1 }
 exit 0
