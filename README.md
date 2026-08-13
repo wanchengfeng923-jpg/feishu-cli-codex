@@ -5,7 +5,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `setup-lark-cli.ps1` | 主脚本（全流程：预检 → 安装/更新 lark-cli → 应用配置 → 登录授权 → Codex 集成（skills/规则/PATH）→ 可用性验证 → 权限申请单） |
+| `setup-lark-cli.ps1` | 主脚本（全流程：预检 → 安装/更新 lark-cli → 应用配置 → 登录授权 → Codex 集成（skills/规则/PATH）→ 可用性验证 → cc-connect 远程接入 → 权限申请单） |
 | `setup-lark-cli.exe` | 主脚本编译的单文件版（自包含，含模板/标签） |
 | `permission-report-template.md` | 权限申请单的 Markdown 模板（中文，脚本自动填充） |
 | `lark-domain-labels.json` | 权限域的中文名映射（可自行修改） |
@@ -39,6 +39,26 @@ Install-Module ps2exe -Scope CurrentUser   # 首次需要，另需 NuGet provide
 ps2exe -inputFile setup-lark-cli.ps1 -outputFile setup-lark-cli.exe `
        -title "Codex Feishu CLI Setup" -version "1.0.0.0"
 ```
+
+## cc-connect 远程接入（默认开启）
+
+脚本默认会在最后自动安装并配置 **cc-connect**（飞书聊天 → 本机 Codex CLI 的桥），装完即可在飞书里直接给机器人发任务：
+
+- 安装 cc-connect 与官方 Codex CLI（npm 全局，`codex --version` 可验证）；
+- **复用同一个飞书应用**写 `~/.cc-connect/config.toml`——不产生新的权限申请，沿用同一份一次性权限申请单；
+- 默认开启**卡片进度**（`enable_feishu_card = true`、`progress_style = "card"`）：任务进度显示为一张自动更新的卡片，不刷屏；聊天内隐藏「工具 #N: Bash …」过程行（`[display] tool_messages = false`）；
+- 自动在工作目录写入 `AGENTS.md`，告诉 Codex 会话「lark-cli 已安装、沙箱文件视图不可靠」，避免误报“lark-cli 未安装”；
+- 安装 Windows 后台服务（计划任务），并自动转为**非交互会话（S4U）**：桌面不会弹出控制台窗口，开机/登录自启；
+- 默认工作目录为 `%USERPROFILE%\CodexWorkspace`（可随时在飞书里用 `/dir` 切换）。
+
+相关参数：
+
+```powershell
+setup-lark-cli.exe -CcWorkDir D:\Projects   # 指定 cc-connect 项目工作目录
+setup-lark-cli.exe -SkipCcConnect           # 跳过 cc-connect 安装/配置
+```
+
+> 说明：cc-connect 需要该应用的 AppSecret，脚本会询问一次（仅写入 `~/.cc-connect/config.toml`）；机器人收发消息所需的 IM 权限已包含在同一份全量权限申请单中，无需单独再申请。
 
 ## 在 Codex 里使用（沙箱规则 + PATH，自动处理）
 

@@ -423,6 +423,10 @@ language = "zh"
 [log]
 level = "info"
 
+[display]
+thinking_messages = true
+tool_messages = false
+
 [[projects]]
 name = "codex"
 
@@ -439,7 +443,8 @@ type = "feishu"
 [projects.platforms.options]
 app_id = "$AppIdValue"
 app_secret = "$SecretValue"
-enable_feishu_card = false
+enable_feishu_card = true
+progress_style = "card"
 allow_from = "$allow"
 "@
     try {
@@ -449,6 +454,38 @@ allow_from = "$allow"
         Write-Fail ("Could not write cc-connect config: " + $_.Exception.Message)
         return $false
     }
+    $agentsMd = Join-Path $workDir 'AGENTS.md'
+    if (-not (Test-Path -LiteralPath $agentsMd)) {
+        $agentsContent = @'
+# CodexWorkspace 说明（cc-connect 远程会话专用）
+
+## 环境事实（重要，避免误判）
+
+- lark-cli 已安装并可用。直接运行 `lark-cli <domain> +<command> ...` 即可，例如：
+  - `lark-cli auth status` 检查登录与身份
+  - `lark-cli drive +search --query "<关键词>" --as user` 搜索飞书云空间文档
+- **沙箱假象**：当前执行环境对文件系统/命令解析做了隔离。`Get-Command lark-cli`、
+  `where.exe lark-cli`、`Test-Path ...\AppData\Roaming\npm\lark-cli.cmd` 可能返回
+  “找不到”或显示目录为空——这是沙箱视图造成的，不代表 lark-cli 未安装。
+- 网络：lark-cli 已由 `~/.codex/rules/lark-cli.rules` 放行，可以访问飞书 API。
+- 身份：访问个人资源（云盘、文档、日历、邮件等）用 `--as user`；机器人身份用 `--as bot`。
+- 飞书 skills 位于 `~/.agents/skills/lark-*`（lark-drive、lark-doc、lark-sheets、
+  lark-calendar、lark-im 等），按需读取对应 SKILL.md 获取完整命令用法。
+
+## 工作约定
+
+- 飞书相关任务优先使用 lark-cli + 对应 skill 完成。
+- 若命令报错（权限、scope、参数等），把**原始错误信息**原样报告给用户，不要自行推断
+  “未安装”或“环境缺失”。
+- 搜索云空间文件时，`--query` 必须给具体关键词，避免空查询。
+'@
+        try {
+            Set-Content -LiteralPath $agentsMd -Value $agentsContent -Encoding UTF8
+            Write-Ok "workspace AGENTS.md written: $agentsMd"
+        } catch {
+            Write-Warn ("Could not write AGENTS.md: " + $_.Exception.Message)
+        }
+    }
     cc-connect config format 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Fail 'cc-connect config format validation failed.'; return $false }
     Write-Ok 'cc-connect config validated.'
@@ -456,6 +493,21 @@ allow_from = "$allow"
     cc-connect daemon install --config $cfgPath --force 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Fail 'cc-connect daemon install failed; run manually: cc-connect daemon install --config <path>'; return $false }
     Write-Ok 'cc-connect daemon installed and started (auto-start on login).'
+    try {
+        $t = Get-ScheduledTask -TaskName 'cc-connect' -ErrorAction SilentlyContinue
+        if ($t -and $t.Principal.LogonType -ne 'S4U') {
+            $principal = New-ScheduledTaskPrincipal -UserId $t.Principal.UserId -LogonType S4U -RunLevel Limited
+            $triggers = @((New-ScheduledTaskTrigger -AtLogOn -User $t.Principal.UserId), (New-ScheduledTaskTrigger -AtStartup))
+            Set-ScheduledTask -TaskName 'cc-connect' -Principal $principal -Trigger $triggers | Out-Null
+            Write-Ok 'cc-connect service converted to non-interactive (S4U): no console windows on desktop.'
+            cc-connect daemon stop 2>&1 | Out-Null
+            Start-Sleep -Seconds 2
+            cc-connect daemon start 2>&1 | Out-Null
+            Write-Ok 'cc-connect service restarted under the non-interactive session.'
+        }
+    } catch {
+        Write-Warn ("Could not convert cc-connect task to S4U: " + $_.Exception.Message)
+    }
     return $true
 }
 
