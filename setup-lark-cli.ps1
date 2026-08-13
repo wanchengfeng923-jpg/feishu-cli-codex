@@ -39,7 +39,9 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# 使用 Continue 而不是 Stop：ps2exe 环境下外部命令 shim 的 stderr 噪音
+# 会被 Stop 策略当成致命错误导致闪退。真实失败靠 $LASTEXITCODE / Write-Fail 捕获。
+$ErrorActionPreference = 'Continue'
 
 trap {
     Write-Host ''
