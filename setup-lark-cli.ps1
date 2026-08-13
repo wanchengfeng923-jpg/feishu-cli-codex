@@ -556,8 +556,21 @@ allow_from = "$allow"
         if ($t -and $t.Principal.LogonType -ne 'S4U') {
             $principal = New-ScheduledTaskPrincipal -UserId $t.Principal.UserId -LogonType S4U -RunLevel Limited
             $triggers = @((New-ScheduledTaskTrigger -AtLogOn -User $t.Principal.UserId), (New-ScheduledTaskTrigger -AtStartup))
-            Set-ScheduledTask -TaskName 'cc-connect' -Principal $principal -Trigger $triggers | Out-Null
-            Write-Ok 'cc-connect service converted to non-interactive (S4U): no console windows on desktop.'
+            $s4uOk = $false
+            try {
+                Set-ScheduledTask -TaskName 'cc-connect' -Principal $principal -Trigger $triggers -ErrorAction Stop | Out-Null
+                $s4uOk = $true
+            } catch {
+                Write-Warn ("S4U 无窗口转换失败（" + $_.Exception.Message + "）：服务仍可使用，但控制台窗口可能弹出；可尝试以管理员身份运行一次本脚本。")
+            }
+            if ($s4uOk) {
+                $t2 = Get-ScheduledTask -TaskName 'cc-connect' -ErrorAction SilentlyContinue
+                if ($t2 -and $t2.Principal.LogonType -eq 'S4U') {
+                    Write-Ok 'cc-connect service converted to non-interactive (S4U): no console windows on desktop.'
+                } else {
+                    Write-Warn 'S4U 转换未生效（计划任务登录类型未改变）；服务仍可用，但控制台窗口可能弹出。'
+                }
+            }
         }
         cc-connect daemon stop 2>&1 | Out-Null
         Start-Sleep -Seconds 2
