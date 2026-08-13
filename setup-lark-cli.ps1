@@ -111,6 +111,22 @@ function Read-UserInput {
     }
 }
 
+function Show-AppSecretGuidance {
+    param([string]$ForWhat)
+    Write-Host ''
+    Write-Host ("需要你的飞书应用 AppSecret（应用密钥）" + $ForWhat + "。") -ForegroundColor Yellow
+    Write-Host '获取方式（约 30 秒）：' -ForegroundColor Cyan
+    Write-Host '  1) 打开飞书开放平台：https://open.feishu.cn'
+    Write-Host '  2) 右上角点「开发者后台」→ 选择你的应用'
+    Write-Host '     （就是你之前配置/新建的那个应用，名字可能类似「xxx 的飞书 CLI」）'
+    Write-Host '  3) 左侧菜单点「凭证与基础信息」→ 找到「App Secret」→ 点「查看」'
+    Write-Host '     （首次查看可能需要二次验证或扫码，按页面提示操作即可）'
+    Write-Host '  4) 复制这串密钥（约 32 位，大小写字母+数字混合）'
+    Write-Host ''
+    Write-Host '⚠ 注意：AppSecret 相当于应用的密码，只会写入本机配置文件，请勿发到聊天或群里。' -ForegroundColor DarkYellow
+    Write-Host ''
+}
+
 function Invoke-Lark {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$LarkArgs)
     $oldEAP = $ErrorActionPreference
@@ -924,7 +940,8 @@ if ($hasConfig) {
                 if ([string]::IsNullOrWhiteSpace($appIdInput)) {
                     Write-Fail 'No App ID entered.'
                 } else {
-                    Write-Host '(AppSecret 输入时会明文显示；也可改用 -AppId/-AppSecret 参数避免交互输入)' -ForegroundColor Yellow
+                    Show-AppSecretGuidance -ForWhat '（lark-cli 应用配置）'
+                    Write-Host '(输入时会明文显示；也可改用 -AppId/-AppSecret 参数避免交互输入)' -ForegroundColor Yellow
                     $appSecretInput = Read-UserInput 'Enter App Secret'
                     if ([string]::IsNullOrWhiteSpace($appSecretInput)) {
                         Write-Fail 'No App Secret entered.'
@@ -981,17 +998,31 @@ if ($st -and (Get-JsonProp $st 'verified')) {
             if ($CheckOnly -or $SkipLogin) {
                 Write-Host '  Fix later with: lark-cli auth login --domain all' -ForegroundColor Yellow
             } else {
-                $ans = Read-UserInput "Re-authorize now to grant all $($missingCov.Count) missing scopes? [Y/n]"
-                if ($ans -and $ans -notmatch '^[nN]') {
-                    $ok = Invoke-UserLogin -LoginDomains $Domains
-                    if ($ok) {
-                        Invoke-Lark auth status --json --verify
-                        $st = Get-LarkJson
-                        $userToken = Get-JsonProp $st 'identities.user.tokenStatus'
-                        $userScope = Get-JsonProp $st 'identities.user.scope'
+                $statePath = Join-Path $HOME '.lark-cli\codex-setup-state.json'
+                $curHash = (($missingCov | Sort-Object) -join '|')
+                $lastHash = $null
+                if (Test-Path -LiteralPath $statePath) {
+                    try { $lastHash = [string]((Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json).missingScopeHash) } catch { }
+                }
+                if ($lastHash -ne $curHash) {
+                    $ans = Read-UserInput "Re-authorize now to grant all $($missingCov.Count) missing scopes? [Y/n]"
+                    if ($ans -and $ans -notmatch '^[nN]') {
+                        $ok = Invoke-UserLogin -LoginDomains $Domains
+                        if ($ok) {
+                            Invoke-Lark auth status --json --verify
+                            $st = Get-LarkJson
+                            $userToken = Get-JsonProp $st 'identities.user.tokenStatus'
+                            $userScope = Get-JsonProp $st 'identities.user.scope'
+                        }
+                    } else {
+                        Write-Host 'Skipped; missing scopes are listed in the final permission report.' -ForegroundColor Yellow
                     }
+                    try {
+                        $state = @{ missingScopeHash = $curHash } | ConvertTo-Json
+                        Set-Content -LiteralPath $statePath -Value $state -Encoding UTF8
+                    } catch { }
                 } else {
-                    Write-Host 'Skipped; missing scopes are listed in the final permission report.' -ForegroundColor Yellow
+                    Write-Host "缺失权限与上次运行相同（$($missingCov.Count) 项），不再重复询问。需要补充时可运行：lark-cli auth login --domain all" -ForegroundColor Yellow
                 }
             }
         } else {
@@ -1189,7 +1220,8 @@ if (-not $SkipCcConnect) {
         }
         if (-not $ccSecret) {
             Write-Host 'cc-connect needs the AppSecret of the SAME Feishu app. It is stored in plaintext at ~/.cc-connect/config.toml.' -ForegroundColor Yellow
-            Write-Host '(输入时明文显示；也可用 -AppSecret 参数避免交互输入)' -ForegroundColor Yellow
+            Show-AppSecretGuidance -ForWhat '（cc-connect 接入）'
+            Write-Host '(输入时会明文显示；也可用 -AppSecret 参数避免交互输入)' -ForegroundColor Yellow
             $ccSecret = Read-UserInput 'Enter App Secret for cc-connect'
         }
         if (-not $ccSecret) {
@@ -1310,19 +1342,23 @@ if (-not $appId) {
         $tpl = $tpl.Replace('{{DOMAIN_SUMMARY_TABLE}}', ($domainRows -join "`n"))
         $tpl = $tpl.Replace('{{SCOPE_TABLE}}', ($scopeRows -join "`n"))
         $reportPath = Join-Path $script:OutDir ("lark-permission-request-" + (Get-Date -Format 'yyyyMMdd-HHmm') + ".md")
-        try {
-            Set-Content -LiteralPath $reportPath -Value $tpl -Encoding UTF8
-            Write-Ok "Permission report generated: $reportPath"
-            Write-Host ''
-            Write-Host 'Console URL for the admin:' -ForegroundColor Yellow
-            Write-Host $consoleUrl
-            Write-Host ''
-            Write-Host "Summary: $($script:AllScopes.Count) target scopes | $enabledCount app-enabled | $($userScopeSet.Count) user-granted | $adminMissing need admin approval | $userMissing need user consent" -ForegroundColor Yellow
-            if ($adminMissing -gt 0) {
+        if ($adminMissing -eq 0 -and $userMissing -eq 0) {
+            Write-Ok '所有权限已就绪，无需生成申请单。'
+        } elseif ($adminMissing -eq 0) {
+            Write-Warn "无需管理员审批；还有 $userMissing 项权限待你本人扫码授权（可运行 lark-cli auth login --domain all 补充），本次不生成申请单。"
+        } else {
+            try {
+                Set-Content -LiteralPath $reportPath -Value $tpl -Encoding UTF8
+                Write-Ok "Permission report generated: $reportPath"
+                Write-Host ''
+                Write-Host 'Console URL for the admin:' -ForegroundColor Yellow
+                Write-Host $consoleUrl
+                Write-Host ''
+                Write-Host "Summary: $($script:AllScopes.Count) target scopes | $enabledCount app-enabled | $($userScopeSet.Count) user-granted | $adminMissing need admin approval | $userMissing need user consent" -ForegroundColor Yellow
                 Write-Host "Take the report to your leader/admin once; no repeated permission requests needed." -ForegroundColor Yellow
+            } catch {
+                Write-Fail ("Could not write report: " + $_.Exception.Message)
             }
-        } catch {
-            Write-Fail ("Could not write report: " + $_.Exception.Message)
         }
     }
 }
