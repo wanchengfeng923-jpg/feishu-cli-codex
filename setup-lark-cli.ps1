@@ -980,7 +980,7 @@ $userScope   = Get-JsonProp $st 'identities.user.scope'
 $appId       = Get-JsonProp $st 'appId'
 if (-not $appId) { $appId = $configAppId }
 
-if ($st -and (Get-JsonProp $st 'verified')) {
+if ($st -and $userToken -eq 'valid') {
     if ($botStatus) {
         Write-Ok "Bot identity: $botStatus ($botAppName)"
     } else {
@@ -1045,7 +1045,7 @@ if ($st -and (Get-JsonProp $st 'verified')) {
         }
     }
 } else {
-    Write-Warn 'Auth status could not be verified.'
+    Write-Warn "User identity: $userName, token status: $userToken (需重新授权才会通过)"
     if (-not ($CheckOnly -or $SkipLogin)) {
         $ok = Invoke-UserLogin -LoginDomains $Domains
         if ($ok) {
