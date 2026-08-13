@@ -41,6 +41,20 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+trap {
+    Write-Host ''
+    Write-Host ("[FATAL] 未处理异常: " + $_.Exception.Message) -ForegroundColor Red
+    Write-Host $_.ScriptStackTrace -ForegroundColor Red
+    $script:FailCount++
+    if (-not $CheckOnly) {
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { Read-Host '按回车键退出（建议在终端中运行以查看完整报错）' | Out-Null } catch { }
+        $ErrorActionPreference = $old
+    }
+    exit 1
+}
+
 # Suppress lark-cli update/skills notifiers so JSON output stays clean.
 $env:LARKSUITE_CLI_NO_UPDATE_NOTIFIER = '1'
 $env:LARKSUITE_CLI_NO_SKILLS_NOTIFIER = '1'
@@ -82,6 +96,20 @@ function Write-Step { param([string]$s) Write-Host ("`n===== " + $s + " =====") 
 function Write-Ok   { param([string]$s) Write-Host "[OK]   $s" -ForegroundColor Green }
 function Write-Warn { param([string]$s) $script:WarnCount++; Write-Host "[WARN] $s" -ForegroundColor Yellow }
 function Write-Fail { param([string]$s) $script:FailCount++; Write-Host "[FAIL] $s" -ForegroundColor Red }
+
+function Read-UserInput {
+    param([string]$Prompt)
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        return [string](Read-Host $Prompt)
+    } catch {
+        Write-Warn '交互输入不可用（控制台输入被重定向或当前环境不支持），已按空输入继续。'
+        return ''
+    } finally {
+        $ErrorActionPreference = $oldEAP
+    }
+}
 
 function Invoke-Lark {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$LarkArgs)
@@ -351,6 +379,7 @@ function Ensure-NpmOnPath {
 }
 
 function Get-CcOwnerOpenId {
+    $ErrorActionPreference = 'Continue'
     $show = lark-cli config show 2>$null | Out-String
     $m = [regex]::Match($show, 'ou_[A-Za-z0-9]+')
     if ($m.Success) { return $m.Value }
@@ -358,6 +387,7 @@ function Get-CcOwnerOpenId {
 }
 
 function Ensure-CcConnect {
+    $ErrorActionPreference = 'Continue'
     $found = $false
     try {
         $v = cc-connect --version 2>&1 | Out-String
@@ -382,6 +412,7 @@ function Ensure-CcConnect {
 }
 
 function Ensure-CodexCli {
+    $ErrorActionPreference = 'Continue'
     $ok = $false
     try {
         $v = codex --version 2>&1 | Out-String
@@ -404,6 +435,7 @@ function Ensure-CodexCli {
 
 function Install-CcConnectProject {
     param([string]$AppIdValue, [string]$SecretValue)
+    $ErrorActionPreference = 'Continue'
     $workDir = if ($CcWorkDir) { $CcWorkDir } else { Join-Path $HOME 'CodexWorkspace' }
     $workDirForward = $workDir -replace '\\', '/'
     if (-not (Test-Path -LiteralPath $workDir)) {
@@ -502,6 +534,8 @@ allow_from = "$allow"
             Write-Ok 'cc-connect service converted to non-interactive (S4U): no console windows on desktop.'
             cc-connect daemon stop 2>&1 | Out-Null
             Start-Sleep -Seconds 2
+            Get-Process cc-connect -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
             cc-connect daemon start 2>&1 | Out-Null
             Write-Ok 'cc-connect service restarted under the non-interactive session.'
         }
@@ -539,7 +573,7 @@ function Invoke-UserLogin {
         Pop-Location
     }
     Write-Host ''
-    Read-Host 'After authorizing in the Feishu app, press Enter to continue'
+    Read-UserInput 'After authorizing in the Feishu app, press Enter to continue'
     Invoke-Lark auth login --device-code $code
     if ($script:LarkExit -ne 0) {
         Write-Fail 'Login completion failed. Reopen the URL and authorize, then rerun.'
@@ -869,8 +903,8 @@ if ($hasConfig) {
             if ($LASTEXITCODE -eq 0) { Write-Ok 'New app created and configured.' }
             else { Write-Fail 'New app creation flow failed or was cancelled.' }
         } else {
-            $ans = Read-Host 'No app found on this machine. Auto-create a new Feishu app now (one browser authorization)? [Y/n]'
-            if ($ans -notmatch '^[nN]') {
+                $ans = Read-UserInput 'No app found on this machine. Auto-create a new Feishu app now (one browser authorization)? [Y/n]'
+            if ($ans -and $ans -notmatch '^[nN]') {
                 Write-Host 'Creating a new Feishu app (browser flow; finish the authorization once)...' -ForegroundColor Yellow
                 & $script:LarkCliBin config init --new --brand $Brand --force-init
                 if ($LASTEXITCODE -eq 0) {
@@ -886,20 +920,12 @@ if ($hasConfig) {
                 if (-not $configAppId) { Write-Fail 'New app creation did not produce a valid config.' }
             } else {
                 Write-Host 'Using your existing app. Get AppId/AppSecret at: https://open.feishu.cn -> developer console -> your app -> Credentials & Basic Info.' -ForegroundColor Yellow
-                $appIdInput = Read-Host 'Enter App ID'
+                $appIdInput = Read-UserInput 'Enter App ID'
                 if ([string]::IsNullOrWhiteSpace($appIdInput)) {
                     Write-Fail 'No App ID entered.'
                 } else {
-                    $appSecretInput = ''
-                    $sec = $null
-                    try { $sec = Read-Host 'Enter App Secret' -AsSecureString } catch { $sec = $null }
-                    if ($sec -and $sec.Length -gt 0) {
-                        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-                        try { $appSecretInput = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-                        finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-                    } else {
-                        $appSecretInput = Read-Host 'Enter App Secret'
-                    }
+                    Write-Host '(AppSecret 输入时会明文显示；也可改用 -AppId/-AppSecret 参数避免交互输入)' -ForegroundColor Yellow
+                    $appSecretInput = Read-UserInput 'Enter App Secret'
                     if ([string]::IsNullOrWhiteSpace($appSecretInput)) {
                         Write-Fail 'No App Secret entered.'
                     } else {
@@ -955,8 +981,8 @@ if ($st -and (Get-JsonProp $st 'verified')) {
             if ($CheckOnly -or $SkipLogin) {
                 Write-Host '  Fix later with: lark-cli auth login --domain all' -ForegroundColor Yellow
             } else {
-                $ans = Read-Host "Re-authorize now to grant all $($missingCov.Count) missing scopes? [Y/n]"
-                if ($ans -notmatch '^[nN]') {
+                $ans = Read-UserInput "Re-authorize now to grant all $($missingCov.Count) missing scopes? [Y/n]"
+                if ($ans -and $ans -notmatch '^[nN]') {
                     $ok = Invoke-UserLogin -LoginDomains $Domains
                     if ($ok) {
                         Invoke-Lark auth status --json --verify
@@ -1163,12 +1189,8 @@ if (-not $SkipCcConnect) {
         }
         if (-not $ccSecret) {
             Write-Host 'cc-connect needs the AppSecret of the SAME Feishu app. It is stored in plaintext at ~/.cc-connect/config.toml.' -ForegroundColor Yellow
-            try {
-                $sec = Read-Host 'Enter App Secret for cc-connect' -AsSecureString
-                $ccSecret = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
-            } catch {
-                $ccSecret = Read-Host 'Enter App Secret for cc-connect'
-            }
+            Write-Host '(输入时明文显示；也可用 -AppSecret 参数避免交互输入)' -ForegroundColor Yellow
+            $ccSecret = Read-UserInput 'Enter App Secret for cc-connect'
         }
         if (-not $ccSecret) {
             $ccStatus = 'failed (no App Secret)'
